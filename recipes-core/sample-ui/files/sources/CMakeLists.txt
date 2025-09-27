@@ -35,7 +35,7 @@ target_compile_options(${PROJECT_NAME} PUBLIC
 )
 
 target_compile_features(${PROJECT_NAME} PUBLIC
-  cxx_std_11
+  cxx_std_23
 )
 
 target_compile_definitions(${PROJECT_NAME} PUBLIC
@@ -59,7 +59,7 @@ target_link_libraries(${PROJECT_NAME}
 
 set_target_properties(${PROJECT_NAME} PROPERTIES
   LINKER_LANGUAGE CXX
-  CXX_STANDARD 11
+  CXX_STANDARD 23
 )
 
 # for yocto

@@ -11,22 +11,13 @@
 #include <iostream>
 #include <chrono>
 #include <ctime>
+#include <memory>
 
-/**********************
- *      TYPEDEFS
- **********************/
-typedef enum {
-    DISP_SMALL,
-    DISP_MEDIUM,
-    DISP_LARGE,
-} disp_size_t;
-
+#include <ScreenManager.h>
 
 /**********************
  *  STATIC VARIABLES
  **********************/
-static disp_size_t disp_size;
-
 static lv_obj_t* calendar;
 static lv_style_t style_text_muted;
 static lv_style_t style_title;
@@ -126,10 +117,8 @@ void SystemDateTimeWidget::ChangeValue()
 static void header_create(lv_obj_t* parent);
 static void profile_create(lv_obj_t* parent, SystemDateTimeWidget& dt_widget);
 
-
 void lv_demo_widgets2(SystemDateTimeWidget& dt_widget)
 {
-    disp_size = DISP_SMALL;
     font_large = LV_FONT_DEFAULT;
     font_normal = LV_FONT_DEFAULT;
 
@@ -345,67 +334,16 @@ static void profile_create(lv_obj_t* parent, SystemDateTimeWidget& dt_widget)
 }
 
 
+
 int main(void)
 {
-    uint32_t disp_width;
-    uint32_t disp_height;
-    uint32_t disp_dpi;
-    // lv_disp_draw_buf_t draw_buf;
-    lv_color_t *disp_buf;
-    // static lv_disp_drv_t disp_drv;
-    // lv_disp_t *disp;
-    // lv_indev_drv_t indev_drv;
-    lv_indev_t *touch;
-    uint64_t lvgl_tick_prev = -1;
+    auto sm = std::make_unique<ScreenManager>();
 
-    lv_init();
-
-    lv_display_t *disp = lv_linux_fbdev_create();
-    lv_linux_fbdev_set_file(disp, "/dev/fb0");
-
-    /*
-    fbdev_init();
-    fbdev_get_sizes(&disp_width, &disp_height, &disp_dpi);
-    disp_buf = (lv_color_t *) malloc(sizeof(lv_color_t) * disp_width * disp_height);
-    if(disp_buf == nullptr) {
-        fprintf(stderr, "Failed to alocate display buffer\n");
-        return -1;
-    }
-
-    disp = lv_display_create(disp_width, disp_height);
-    lv_display_set_dpi(disp, disp_dpi);
-
-    lv_display_set_flush_cb(disp, fbdev_flush);
-
-    lv_display_set_draw_buffers(disp, disp_buf, NULL,
-                                disp_width * disp_height, LV_DISPLAY_RENDER_MODE_PARTIAL);
-
-    lv_disp_draw_buf_init(&draw_buf, disp_buf, NULL, disp_width * disp_height);
-
-
-    evdev_init();
-    indev = lv_indev_create();
-    lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
-    lv_indev_set_read_cb(indev, evdev_read);
-    */
-
-
-    touch = lv_evdev_create(LV_INDEV_TYPE_POINTER, "/dev/input/touchscreen0");
-    lv_indev_set_display(touch, disp);    
-    lv_evdev_set_calibration(touch, 200, 3900, 3900, 200);
-    lv_evdev_set_swap_axes(touch, true);
-    
     SystemDateTimeWidget dt_widget;
     
     lv_demo_widgets2(dt_widget);
 
-    while (1)
-    {
-        uint32_t time_till_next = lv_timer_handler();
-        dt_widget.ChangeValue();
-        lv_delay_ms(time_till_next);
-    }
-
+    sm->Start();
 
     return 0;
 }
