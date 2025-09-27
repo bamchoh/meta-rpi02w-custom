@@ -8,13 +8,6 @@ set(CMAKE_THREAD_PREFER_PTHREAD TRUE)
 file(GLOB_RECURSE LVGL_SOURCES ${PROJECT_SOURCE_DIR}/src/lvgl/src/*.c)
 set(LVGL_INCLUDES ${PROJECT_SOURCE_DIR}/src/lvgl/)
 
-# lv_drivers
-file(GLOB LV_DRIVERS_SOURCES
-  ${PROJECT_SOURCE_DIR}/src/lv_drivers/display/fbdev.c
-  ${PROJECT_SOURCE_DIR}/src/lv_drivers/indev/evdev.c
-)
-set(LV_DRIVERS_INCLUDES ${PROJECT_SOURCE_DIR}/src/lv_drivers/)
-
 # common
 file(GLOB COMMON_SOURCES ${PROJECT_SOURCE_DIR}/src/*.cpp)
 set(COMMON_INCLUDES ${PROJECT_SOURCE_DIR}/src/)
@@ -23,17 +16,18 @@ set(COMMON_INCLUDES ${PROJECT_SOURCE_DIR}/src/)
 file(GLOB UI_SOURCES ${PROJECT_SOURCE_DIR}/src/ui/*.cpp)
 set(UI_INCLUDES ${PROJECT_SOURCE_DIR}/src/ui/)
 
+file(GLOB_RECURSE UI_ASSETS ${PROJECT_SOURCE_DIR}/src/mouse_cursor_icon.c)
+
 add_executable(${PROJECT_NAME}
   ${LVGL_SOURCES}
-  ${LV_DRIVERS_SOURCES}
   ${COMMON_SOURCES}
   ${UI_SOURCES}
+  ${UI_ASSETS}
 )
 
 target_include_directories(${PROJECT_NAME} PUBLIC
   ${COMMON_INCLUDES}
   ${LVGL_INCLUDES}
-  ${LV_DRIVERS_INCLUDES}
   ${UI_INCLUDES}
 )
 

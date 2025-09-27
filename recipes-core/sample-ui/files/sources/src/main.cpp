@@ -1,6 +1,4 @@
 #include "lvgl.h"
-#include "lv_drivers/display/fbdev.h"
-#include "lv_drivers/indev/evdev.h"
 #include <unistd.h>
 #include <time.h>
 #include <stdlib.h>
@@ -9,176 +7,405 @@
 #include <unistd.h>
 #include <fcntl.h>
 #include <linux/input.h>
+#include "lvgl/src/core/lv_global.h"
+#include <iostream>
+#include <chrono>
+#include <ctime>
 
-void event_handler(lv_event_t * e) {
-    lv_event_code_t code = lv_event_get_code(e);
-    if(code == LV_EVENT_CLICKED) {
-        fprintf(stderr, "Shutdown!\n");
-        kill(getpid(), SIGINT);
+/**********************
+ *      TYPEDEFS
+ **********************/
+typedef enum {
+    DISP_SMALL,
+    DISP_MEDIUM,
+    DISP_LARGE,
+} disp_size_t;
+
+
+/**********************
+ *  STATIC VARIABLES
+ **********************/
+static disp_size_t disp_size;
+
+static lv_obj_t* calendar;
+static lv_style_t style_text_muted;
+static lv_style_t style_title;
+static lv_style_t style_icon;
+static lv_style_t style_bullet;
+static lv_style_t style_parent_flex_obj;
+static lv_style_t style_textblock;
+
+static lv_obj_t* scale1;
+static lv_obj_t* scale2;
+static lv_obj_t* scale3;
+
+static lv_obj_t* chart1;
+static lv_obj_t* chart2;
+static lv_obj_t* chart3;
+
+static lv_chart_series_t* ser1;
+static lv_chart_series_t* ser2;
+static lv_chart_series_t* ser3;
+static lv_chart_series_t* ser4;
+
+static const lv_font_t* font_large;
+static const lv_font_t* font_normal;
+
+static uint32_t session_desktop = 1000;
+static uint32_t session_tablet = 1000;
+static uint32_t session_mobile = 1000;
+
+static lv_style_t scale3_section1_main_style;
+static lv_style_t scale3_section1_indicator_style;
+static lv_style_t scale3_section1_tick_style;
+static lv_style_t scale3_section2_main_style;
+static lv_style_t scale3_section2_indicator_style;
+static lv_style_t scale3_section2_tick_style;
+static lv_style_t scale3_section3_main_style;
+static lv_style_t scale3_section3_indicator_style;
+static lv_style_t scale3_section3_tick_style;
+
+static lv_obj_t* scale3_needle;
+static lv_obj_t* scale3_mbps_label;
+
+
+
+
+class SystemDateTimeWidget {
+private:
+    lv_subject_t my_subject;
+
+public:
+    SystemDateTimeWidget() {
+        lv_subject_init_int(&my_subject, 0);
+    };
+
+    static void MySubjectObserverCb(lv_observer_t *observer, lv_subject_t *subject)
+    {
+        auto now = std::chrono::system_clock::now();
+        std::time_t t = std::chrono::system_clock::to_time_t(now);
+        struct tm *tm = std::localtime(&t);
+        
+        lv_obj_t *lbl = (lv_obj_t *)lv_observer_get_target(observer);
+        if (lbl) {
+            char buf[64];
+            snprintf(buf, sizeof(buf), "%04d/%02d/%02d %02d:%02d:%02d (%s)",
+                tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
+                tm->tm_hour, tm->tm_min, tm->tm_sec,
+                (tm->tm_wday == 0) ? "Sun" :
+                (tm->tm_wday == 1) ? "Mon" :
+                (tm->tm_wday == 2) ? "Tue" :
+                (tm->tm_wday == 3) ? "Wed" :
+                (tm->tm_wday == 4) ? "Thu" :
+                (tm->tm_wday == 5) ? "Fri" : "Sat");
+            lv_label_set_text(lbl, buf);
+        }
     }
-}
 
-static lv_obj_t * active_ta = NULL;  // 現在フォーカス中のテキストエリア
+    void SetupWidget(lv_obj_t* parent);
 
-static void textarea_event_handler(lv_event_t * e)
+    void ChangeValue();
+};
+
+void SystemDateTimeWidget::SetupWidget(lv_obj_t* parent)
 {
-    lv_obj_t * ta = lv_event_get_target(e);
-    LV_LOG_USER("Enter was pressed. The current text is: %s", lv_textarea_get_text(ta));
+    lv_obj_t* current_datetime = lv_obj_create(parent);
+    lv_obj_set_size(current_datetime, LV_PCT(100), LV_SIZE_CONTENT);
+
+    lv_obj_t* current_datetime_label = lv_label_create(current_datetime);
+    lv_label_set_text(current_datetime_label, "2025/09/24 12:59:58 (Wed)");
+    lv_subject_add_observer_obj(&my_subject, MySubjectObserverCb, current_datetime_label, NULL);
 }
 
-static void textarea_focus_event(lv_event_t * e)
+void SystemDateTimeWidget::ChangeValue()
 {
-    lv_event_code_t code = lv_event_get_code(e);
-    if(code == LV_EVENT_FOCUSED) {
-        active_ta = lv_event_get_target(e);   // フォーカスされた方を記録
-    }
+    lv_subject_notify(&my_subject);
 }
 
-static void btnm_event_handler(lv_event_t * e)
+
+static void header_create(lv_obj_t* parent);
+static void profile_create(lv_obj_t* parent, SystemDateTimeWidget& dt_widget);
+
+
+void lv_demo_widgets2(SystemDateTimeWidget& dt_widget)
 {
-    if(active_ta == NULL) return;  // まだ何もフォーカスされてない場合は無視
+    disp_size = DISP_SMALL;
+    font_large = LV_FONT_DEFAULT;
+    font_normal = LV_FONT_DEFAULT;
 
-    lv_obj_t * obj = lv_event_get_target(e);
-    const char * txt = lv_btnmatrix_get_btn_text(obj, lv_btnmatrix_get_selected_btn(obj));
+    int32_t tab_h;
+    tab_h = 45;
 
-    if(strcmp(txt, LV_SYMBOL_BACKSPACE) == 0) lv_textarea_del_char(active_ta);
-    else if(strcmp(txt, LV_SYMBOL_NEW_LINE) == 0) lv_event_send(active_ta, LV_EVENT_READY, NULL);
-    else lv_textarea_add_text(active_ta, txt);
+    lv_theme_default_init(NULL, lv_palette_main(LV_PALETTE_BLUE), lv_palette_main(LV_PALETTE_RED), LV_THEME_DEFAULT_DARK,
+        font_normal);
+
+    lv_style_init(&style_text_muted);
+    lv_style_set_text_opa(&style_text_muted, LV_OPA_50);
+
+    lv_style_init(&style_title);
+    lv_style_set_text_font(&style_title, font_large);
+
+    lv_style_init(&style_icon);
+    lv_style_set_text_color(&style_icon, lv_theme_get_color_primary(NULL));
+    lv_style_set_text_font(&style_icon, font_large);
+
+    lv_style_init(&style_bullet);
+    lv_style_set_border_width(&style_bullet, 0);
+    lv_style_set_radius(&style_bullet, LV_RADIUS_CIRCLE);
+
+    lv_style_init(&style_parent_flex_obj);
+    lv_style_set_size(&style_parent_flex_obj, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_style_set_border_width(&style_parent_flex_obj, 0);
+    lv_style_set_bg_opa(&style_parent_flex_obj, LV_OPA_0);
+    lv_style_set_pad_all(&style_parent_flex_obj, 0);
+
+    lv_style_init(&style_textblock);
+    lv_style_set_width(&style_textblock, LV_PCT(100));
+
+    lv_obj_set_style_text_font(lv_screen_active(), font_normal, 0);
+
+    header_create(lv_layer_top());
+
+    profile_create(lv_screen_active(), dt_widget);
 }
 
-void lv_example_textarea_1(void)
+
+
+/**********************
+ *   STATIC FUNCTIONS
+ **********************/
+
+
+
+
+
+static void header_create(lv_obj_t* parent)
 {
-    lv_obj_t * ta = lv_textarea_create(lv_scr_act());
-    lv_textarea_set_one_line(ta, true);
-    lv_obj_align(ta, LV_ALIGN_TOP_MID, 0, 10);
-    lv_obj_add_event_cb(ta, textarea_event_handler, LV_EVENT_READY, ta);
-    lv_obj_add_event_cb(ta, textarea_focus_event, LV_EVENT_FOCUSED, NULL);
-
-    lv_obj_t * ta1 = lv_textarea_create(lv_scr_act());
-    lv_textarea_set_one_line(ta1, true);
-    lv_obj_align(ta1, LV_ALIGN_TOP_MID, 0, 50);
-    lv_obj_add_event_cb(ta1, textarea_event_handler, LV_EVENT_READY, ta1);
-    lv_obj_add_event_cb(ta1, textarea_focus_event, LV_EVENT_FOCUSED, NULL);
-
-    static const char * btnm_map[] = {"1", "2", "3", "\n",
-                                      "4", "5", "6", "\n",
-                                      "7", "8", "9", "\n",
-                                      LV_SYMBOL_BACKSPACE, "0", LV_SYMBOL_NEW_LINE, ""
-                                     };
-
-    lv_obj_t * btnm = lv_btnmatrix_create(lv_scr_act());
-    lv_obj_set_size(btnm, 200, 150);
-    lv_obj_align(btnm, LV_ALIGN_BOTTOM_MID, 0, -10);
-    lv_obj_add_event_cb(btnm, btnm_event_handler, LV_EVENT_CLICKED, NULL);
-    lv_obj_clear_flag(btnm, LV_OBJ_FLAG_CLICK_FOCUSABLE); /*To keep the text area focused on button clicks*/
-    lv_btnmatrix_set_map(btnm, btnm_map);
+    lv_obj_t* header = lv_obj_create(parent);
+    lv_obj_set_size(header, LV_PCT(100), 40);               // 画面幅いっぱい、高さ40px
+    lv_obj_set_style_radius(header, 0, 0);
+    lv_obj_set_style_bg_color(header, lv_color_hex(0x111184), 0); // 背景色
+    lv_obj_set_style_pad_all(header, 8, 0);                 // 内側余白
+    lv_obj_align(header, LV_ALIGN_TOP_MID, 0, 0);
+    lv_obj_set_style_opa(header, LV_OPA_80, 0);
+    /* Label を作る */
+    lv_obj_t *title = lv_label_create(header);
+    lv_label_set_text(title, "Hardware Settings");
+    lv_obj_set_style_text_color(title, lv_color_white(), 0);
+    lv_obj_center(title);  // 中央配置
 }
+
+static void profile_create(lv_obj_t* parent, SystemDateTimeWidget& dt_widget)
+{
+    lv_obj_t* panel2 = lv_obj_create(parent);
+    lv_obj_set_height(panel2, LV_SIZE_CONTENT);
+    lv_obj_set_style_pad_top(panel2, 50, 0);
+
+    lv_obj_t* panel2_title = lv_label_create(panel2);
+    lv_label_set_text_static(panel2_title, "Diagnostics");
+    lv_obj_add_style(panel2_title, &style_title, 0);
+
+    lv_obj_t* flex_obj_root = lv_obj_create(panel2);
+    lv_obj_set_flex_flow(flex_obj_root, LV_FLEX_FLOW_COLUMN);
+    lv_obj_set_size(flex_obj_root, LV_PCT(100), LV_SIZE_CONTENT);
+    lv_obj_set_style_border_width(flex_obj_root, 0, 0);
+    // lv_obj_add_style(flex_obj_root, &style_parent_flex_obj, 0);
+    lv_obj_set_style_pad_all(flex_obj_root, 0, 0);
+    lv_obj_set_style_pad_row(flex_obj_root, 30, 0);
+
+
+
+    lv_obj_t* flex_obj1 = lv_obj_create(flex_obj_root);
+    lv_obj_set_flex_flow(flex_obj1, LV_FLEX_FLOW_COLUMN);
+    lv_obj_add_style(flex_obj1, &style_parent_flex_obj, 0);
+
+    lv_obj_t* date_time_label = lv_label_create(flex_obj1);
+    lv_label_set_text_static(date_time_label, "Date/Time");
+    lv_obj_add_style(date_time_label, &style_text_muted, 0);
+
+    dt_widget.SetupWidget(flex_obj1);
+
+
+    lv_obj_t* flex_obj2 = lv_obj_create(flex_obj_root);
+    lv_obj_set_flex_flow(flex_obj2, LV_FLEX_FLOW_COLUMN);
+    lv_obj_add_style(flex_obj2, &style_parent_flex_obj, 0);
+
+    lv_obj_t* ip_addr1_label = lv_label_create(flex_obj2);
+    lv_label_set_text_static(ip_addr1_label, "Ethernet 1");
+    lv_obj_add_style(ip_addr1_label, &style_text_muted, 0);
+
+    lv_obj_t* current_ip_addr1 = lv_obj_create(flex_obj2);
+    lv_obj_set_size(current_ip_addr1, LV_PCT(100), LV_SIZE_CONTENT);
+
+    lv_obj_t* current_ip_addr1_label = lv_label_create(current_ip_addr1);
+    lv_label_set_text(current_ip_addr1_label, "192.168.1.1");
+
+
+
+    lv_obj_t* flex_obj3 = lv_obj_create(flex_obj_root);
+    lv_obj_set_flex_flow(flex_obj3, LV_FLEX_FLOW_COLUMN);
+    lv_obj_add_style(flex_obj3, &style_parent_flex_obj, 0);
+
+    lv_obj_t* ip_addr2_label = lv_label_create(flex_obj3);
+    lv_label_set_text_static(ip_addr2_label, "Ethernet 2");
+    lv_obj_add_style(ip_addr2_label, &style_text_muted, 0);
+
+    lv_obj_t* current_ip_addr2 = lv_obj_create(flex_obj3);
+    lv_obj_set_size(current_ip_addr2, LV_PCT(100), LV_SIZE_CONTENT);
+
+    lv_obj_t* current_ip_addr2_label = lv_label_create(current_ip_addr2);
+    lv_label_set_text(current_ip_addr2_label, "192.168.1.2");
+
+
+
+    lv_obj_t* flex_obj4 = lv_obj_create(flex_obj_root);
+    lv_obj_set_flex_flow(flex_obj4, LV_FLEX_FLOW_COLUMN);
+    lv_obj_add_style(flex_obj4, &style_parent_flex_obj, 0);
+
+    lv_obj_t* version_title = lv_label_create(flex_obj4);
+    lv_label_set_text_static(version_title, "Versions");
+    lv_obj_add_style(version_title, &style_text_muted, 0);
+
+    lv_obj_t* version_comp1 = lv_obj_create(flex_obj4);
+    lv_obj_set_flex_flow(version_comp1, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_border_width(version_comp1, 0, 0);
+    lv_obj_set_size(version_comp1, LV_PCT(100), LV_SIZE_CONTENT);
+
+    lv_obj_t* version1_label = lv_label_create(version_comp1);
+    lv_label_set_text(version1_label, "Version1");
+    lv_obj_set_size(version1_label, LV_PCT(45), LV_SIZE_CONTENT);
+
+    lv_obj_t* version1_value = lv_label_create(version_comp1);
+    lv_label_set_text(version1_value, "1.0.0.0");
+    lv_obj_set_size(version1_value, LV_PCT(45), LV_SIZE_CONTENT);
+
+    lv_obj_t* version_comp2 = lv_obj_create(flex_obj4);
+    lv_obj_set_flex_flow(version_comp2, LV_FLEX_FLOW_ROW);
+    lv_obj_set_style_border_width(version_comp2, 0, 0);
+    lv_obj_set_size(version_comp2, LV_PCT(100), LV_SIZE_CONTENT);
+
+    lv_obj_t* version2_label = lv_label_create(version_comp2);
+    lv_label_set_text(version2_label, "Version1");
+    lv_obj_set_size(version2_label, LV_PCT(45), LV_SIZE_CONTENT);
+
+    lv_obj_t* version2_value = lv_label_create(version_comp2);
+    lv_label_set_text(version2_value, "12.23.34.45");
+    lv_obj_set_size(version2_value, LV_PCT(45), LV_SIZE_CONTENT);
+
+
+    /*
+    lv_obj_t* password_label = lv_label_create(panel2);
+    lv_label_set_text_static(password_label, "Password");
+    lv_obj_add_style(password_label, &style_text_muted, 0);
+
+    lv_obj_t* password = lv_textarea_create(panel2);
+    lv_textarea_set_one_line(password, true);
+    lv_textarea_set_password_mode(password, true);
+    lv_textarea_set_placeholder_text(password, "Min. 8 chars.");
+    lv_obj_add_event_cb(password, ta_event_cb, LV_EVENT_ALL, kb);
+
+    lv_obj_t* gender_label = lv_label_create(panel2);
+    lv_label_set_text_static(gender_label, "Gender");
+    lv_obj_add_style(gender_label, &style_text_muted, 0);
+
+    lv_obj_t* gender = lv_dropdown_create(panel2);
+    lv_dropdown_set_options_static(gender, "Male\nFemale\nOther");
+
+    lv_obj_t* birthday_label = lv_label_create(panel2);
+    lv_label_set_text_static(birthday_label, "Birthday");
+    lv_obj_add_style(birthday_label, &style_text_muted, 0);
+    */
+
+    /*
+    lv_obj_t* birthdate = lv_textarea_create(panel1);
+    lv_textarea_set_one_line(birthdate, true);
+    lv_obj_add_event_cb(birthdate, birthday_event_cb, LV_EVENT_ALL, NULL);
+    */
+
+    static int32_t grid_main_col_dsc[] = { LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST };
+    static int32_t grid_main_row_dsc[] = { LV_GRID_CONTENT, LV_GRID_TEMPLATE_LAST };
+
+    lv_obj_set_grid_dsc_array(parent, grid_main_col_dsc, grid_main_row_dsc);
+
+    static int32_t grid_2_col_dsc[] = { LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST };
+    static int32_t grid_2_row_dsc[] = {
+        LV_GRID_CONTENT,      /*Title*/
+        5,                    /*Separator*/
+        LV_GRID_CONTENT,      /*Box title*/
+        LV_GRID_TEMPLATE_LAST /*Box*/
+    };
+
+    lv_obj_set_grid_dsc_array(panel2, grid_2_col_dsc, grid_2_row_dsc);
+    // lv_obj_set_grid_dsc_array(panel3, grid_main_col_dsc, grid_2_row_dsc);
+
+    lv_obj_set_grid_cell(panel2, LV_GRID_ALIGN_STRETCH, 0, 1, LV_GRID_ALIGN_CENTER, 0, 1);
+
+    lv_obj_set_grid_cell(panel2_title, LV_GRID_ALIGN_START, 0, 1, LV_GRID_ALIGN_CENTER, 0, 1);
+    lv_obj_set_grid_cell(flex_obj_root, LV_GRID_ALIGN_STRETCH, 0, 1, LV_GRID_ALIGN_START, 2, 1);
+}
+
 
 int main(void)
 {
     uint32_t disp_width;
     uint32_t disp_height;
     uint32_t disp_dpi;
-    lv_disp_draw_buf_t draw_buf;
+    // lv_disp_draw_buf_t draw_buf;
     lv_color_t *disp_buf;
-    static lv_disp_drv_t disp_drv;
-    lv_disp_t *disp;
-    lv_indev_drv_t indev_drv;
-    lv_indev_t *indev;
+    // static lv_disp_drv_t disp_drv;
+    // lv_disp_t *disp;
+    // lv_indev_drv_t indev_drv;
+    lv_indev_t *touch;
     uint64_t lvgl_tick_prev = -1;
 
     lv_init();
 
+    lv_display_t *disp = lv_linux_fbdev_create();
+    lv_linux_fbdev_set_file(disp, "/dev/fb0");
+
+    /*
     fbdev_init();
     fbdev_get_sizes(&disp_width, &disp_height, &disp_dpi);
-    printf("Display: %ux%u dpi=%u\n", disp_width, disp_height, disp_dpi);
     disp_buf = (lv_color_t *) malloc(sizeof(lv_color_t) * disp_width * disp_height);
     if(disp_buf == nullptr) {
         fprintf(stderr, "Failed to alocate display buffer\n");
         return -1;
     }
+
+    disp = lv_display_create(disp_width, disp_height);
+    lv_display_set_dpi(disp, disp_dpi);
+
+    lv_display_set_flush_cb(disp, fbdev_flush);
+
+    lv_display_set_draw_buffers(disp, disp_buf, NULL,
+                                disp_width * disp_height, LV_DISPLAY_RENDER_MODE_PARTIAL);
+
     lv_disp_draw_buf_init(&draw_buf, disp_buf, NULL, disp_width * disp_height);
 
 
-    lv_disp_drv_init(&disp_drv);
-    disp_drv.draw_buf = &draw_buf;
-    disp_drv.flush_cb = fbdev_flush;
-    disp_drv.hor_res = disp_width;
-    disp_drv.ver_res = disp_height;
-    disp_drv.dpi = disp_dpi;
-    disp = lv_disp_drv_register(&disp_drv);
-
-
     evdev_init();
-    lv_indev_drv_init(&indev_drv);
-    indev_drv.type = LV_INDEV_TYPE_POINTER;
-    indev_drv.read_cb = evdev_read;
-    indev = lv_indev_drv_register(&indev_drv);
-
-    lv_obj_set_style_bg_color(lv_scr_act(), lv_color_white(), LV_PART_MAIN);    
-
-    // header container
-    /*
-    lv_obj_t * container_header = lv_obj_create(lv_scr_act());
-    lv_obj_set_size(container_header, disp_width, LV_SIZE_CONTENT);
-    lv_obj_align(container_header, LV_ALIGN_TOP_MID, 0, 0);
-    lv_obj_set_flex_flow(container_header, LV_FLEX_FLOW_ROW);
-    lv_obj_set_flex_align(container_header, LV_FLEX_ALIGN_END, LV_FLEX_ALIGN_START, LV_FLEX_ALIGN_CENTER);
-    lv_obj_set_style_border_color(container_header, lv_color_white(), LV_PART_MAIN);
-
-    lv_obj_t *label = lv_label_create(container_header); // 現在アクティブなスクリーンに配置
-    lv_label_set_text(label, "Hello, LVGL v9!");
-
-    lv_obj_t *label_clock = lv_label_create(container_header); // 現在アクティブなスクリーンに配置
-    lv_label_set_text(label_clock, "(clock here)");
-
-    lv_obj_t *shutdown_btn = lv_btn_create(container_header);
-    lv_obj_add_event_cb(shutdown_btn, event_handler, LV_EVENT_CLICKED, NULL);
-    lv_obj_t *shutdown_label = lv_label_create(shutdown_btn);
-    lv_label_set_text(shutdown_label, "Shutdown");
-    lv_obj_center(shutdown_label);
+    indev = lv_indev_create();
+    lv_indev_set_type(indev, LV_INDEV_TYPE_POINTER);
+    lv_indev_set_read_cb(indev, evdev_read);
     */
 
-    lv_example_textarea_1();
 
-    while(1) {
-        /*
-        struct timespec ts;
-        if(clock_gettime(CLOCK_REALTIME, &ts) < 0) {
-            fputs("Failed to get time\n", stderr);
-            return -1;
-        }
-        struct tm gt;
-        if(gmtime_r(&ts.tv_sec, &gt) == nullptr) {
-            fputs("Failed to convert time\n", stderr);
-            return -1;
-        }
-        char clock[64];
-        snprintf(clock, 64, "%02u-%02u-%04u %02u:%02u:%02u (UTC)",
-            gt.tm_mon + 1,
-            gt.tm_mday,
-            gt.tm_year + 1900,
-            gt.tm_hour,
-            gt.tm_min,
-            gt.tm_sec);
-        lv_label_set_text(label_clock, clock);
-        */
+    touch = lv_evdev_create(LV_INDEV_TYPE_POINTER, "/dev/input/touchscreen0");
+    lv_indev_set_display(touch, disp);    
+    lv_evdev_set_calibration(touch, 200, 3900, 3900, 200);
+    lv_evdev_set_swap_axes(touch, true);
+    
+    SystemDateTimeWidget dt_widget;
+    
+    lv_demo_widgets2(dt_widget);
 
-        struct timespec ts4tick;
-        clock_gettime(CLOCK_MONOTONIC, &ts4tick);
-        uint64_t curr = (uint64_t) ts4tick.tv_sec * 1000000000 + (uint64_t) ts4tick.tv_nsec;
-        if(lvgl_tick_prev < 0) {
-            lvgl_tick_prev = curr;
-        } else {
-            uint32_t actual_tick_period = (curr - lvgl_tick_prev) / 1000000;
-            lv_tick_inc(actual_tick_period);
-            lvgl_tick_prev = curr;
-        }
-
-        lv_timer_handler();  // タイマー処理（描画更新など）
-
-        usleep(5000);        // 5ms スリープ
+    while (1)
+    {
+        uint32_t time_till_next = lv_timer_handler();
+        dt_widget.ChangeValue();
+        lv_delay_ms(time_till_next);
     }
+
 
     return 0;
 }
