@@ -12,163 +12,146 @@
 #include <chrono>
 #include <ctime>
 #include <memory>
+#include <vector>
 
 #include <ScreenManager.h>
+#include <IComponent.h>
 
-/**********************
- *  STATIC VARIABLES
- **********************/
-static lv_obj_t* calendar;
-static lv_style_t style_text_muted;
-static lv_style_t style_title;
-static lv_style_t style_icon;
-static lv_style_t style_bullet;
-static lv_style_t style_parent_flex_obj;
-static lv_style_t style_textblock;
-
-static lv_obj_t* scale1;
-static lv_obj_t* scale2;
-static lv_obj_t* scale3;
-
-static lv_obj_t* chart1;
-static lv_obj_t* chart2;
-static lv_obj_t* chart3;
-
-static lv_chart_series_t* ser1;
-static lv_chart_series_t* ser2;
-static lv_chart_series_t* ser3;
-static lv_chart_series_t* ser4;
-
-static const lv_font_t* font_large;
-static const lv_font_t* font_normal;
-
-static uint32_t session_desktop = 1000;
-static uint32_t session_tablet = 1000;
-static uint32_t session_mobile = 1000;
-
-static lv_style_t scale3_section1_main_style;
-static lv_style_t scale3_section1_indicator_style;
-static lv_style_t scale3_section1_tick_style;
-static lv_style_t scale3_section2_main_style;
-static lv_style_t scale3_section2_indicator_style;
-static lv_style_t scale3_section2_tick_style;
-static lv_style_t scale3_section3_main_style;
-static lv_style_t scale3_section3_indicator_style;
-static lv_style_t scale3_section3_tick_style;
-
-static lv_obj_t* scale3_needle;
-static lv_obj_t* scale3_mbps_label;
-
-
-
-
-class SystemDateTimeWidget {
+class Model : public IComponent {
 private:
-    lv_subject_t my_subject;
+    lv_subject_t time_subject;
+    char current_time[64];
 
 public:
-    SystemDateTimeWidget() {
-        lv_subject_init_int(&my_subject, 0);
+    Model() {
+        lv_subject_init_string(&time_subject, current_time, NULL, sizeof(current_time), "");
     };
 
-    static void MySubjectObserverCb(lv_observer_t *observer, lv_subject_t *subject)
-    {
+    lv_subject_t* GetSubject() { return &time_subject; }
+
+    ~Model() {
+    };
+
+    void Draw() override {
         auto now = std::chrono::system_clock::now();
         std::time_t t = std::chrono::system_clock::to_time_t(now);
         struct tm *tm = std::localtime(&t);
-        
+
+        char buf[64];
+        snprintf(buf, sizeof(buf), "%04d/%02d/%02d %02d:%02d:%02d (%s)",
+            tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
+            tm->tm_hour, tm->tm_min, tm->tm_sec,
+            (tm->tm_wday == 0) ? "Sun" :
+            (tm->tm_wday == 1) ? "Mon" :
+            (tm->tm_wday == 2) ? "Tue" :
+            (tm->tm_wday == 3) ? "Wed" :
+            (tm->tm_wday == 4) ? "Thu" :
+            (tm->tm_wday == 5) ? "Fri" : "Sat");
+
+        lv_subject_copy_string(&time_subject, buf);
+        lv_subject_notify(&time_subject);
+
+    }
+};
+
+class SystemDateTimeWidget {
+public:
+    static void MySubjectObserverCb(lv_observer_t *observer, lv_subject_t *subject)
+    {
+        const char* buf = lv_subject_get_string(subject);
         lv_obj_t *lbl = (lv_obj_t *)lv_observer_get_target(observer);
         if (lbl) {
-            char buf[64];
-            snprintf(buf, sizeof(buf), "%04d/%02d/%02d %02d:%02d:%02d (%s)",
-                tm->tm_year + 1900, tm->tm_mon + 1, tm->tm_mday,
-                tm->tm_hour, tm->tm_min, tm->tm_sec,
-                (tm->tm_wday == 0) ? "Sun" :
-                (tm->tm_wday == 1) ? "Mon" :
-                (tm->tm_wday == 2) ? "Tue" :
-                (tm->tm_wday == 3) ? "Wed" :
-                (tm->tm_wday == 4) ? "Thu" :
-                (tm->tm_wday == 5) ? "Fri" : "Sat");
             lv_label_set_text(lbl, buf);
         }
     }
 
-    void SetupWidget(lv_obj_t* parent);
-
-    void ChangeValue();
+    void SetupWidget(lv_obj_t* parent, lv_subject_t* my_subject);
 };
 
-void SystemDateTimeWidget::SetupWidget(lv_obj_t* parent)
+void SystemDateTimeWidget::SetupWidget(lv_obj_t* parent, lv_subject_t* my_subject)
 {
     lv_obj_t* current_datetime = lv_obj_create(parent);
     lv_obj_set_size(current_datetime, LV_PCT(100), LV_SIZE_CONTENT);
 
     lv_obj_t* current_datetime_label = lv_label_create(current_datetime);
-    lv_label_set_text(current_datetime_label, "2025/09/24 12:59:58 (Wed)");
-    lv_subject_add_observer_obj(&my_subject, MySubjectObserverCb, current_datetime_label, NULL);
+    lv_label_set_text(current_datetime_label, "----/--/-- --:--:-- (---)");
+    lv_subject_add_observer_obj(my_subject, MySubjectObserverCb, current_datetime_label, NULL);
 }
 
-void SystemDateTimeWidget::ChangeValue()
+class BaseView : public IComponent {
+private:
+    lv_style_t style_text_muted;
+    lv_style_t style_title;
+    lv_style_t style_icon;
+    lv_style_t style_bullet;
+    lv_style_t style_parent_flex_obj;
+    lv_style_t style_textblock;
+
+    const lv_font_t* font_large;
+    const lv_font_t* font_normal;
+
+    void HeaderCreate(lv_obj_t* parent);
+    void ProfileCreate(lv_obj_t* parent, Model& model);
+
+    std::vector<IComponent*> components;
+
+public:
+    BaseView() {
+        font_large = LV_FONT_DEFAULT;
+        font_normal = LV_FONT_DEFAULT;
+
+        int32_t tab_h;
+        tab_h = 45;
+
+        lv_theme_default_init(NULL, lv_palette_main(LV_PALETTE_BLUE), lv_palette_main(LV_PALETTE_RED), LV_THEME_DEFAULT_DARK,
+            font_normal);
+
+        lv_style_init(&style_text_muted);
+        lv_style_set_text_opa(&style_text_muted, LV_OPA_50);
+
+        lv_style_init(&style_title);
+        lv_style_set_text_font(&style_title, font_large);
+
+        lv_style_init(&style_icon);
+        lv_style_set_text_color(&style_icon, lv_theme_get_color_primary(NULL));
+        lv_style_set_text_font(&style_icon, font_large);
+
+        lv_style_init(&style_bullet);
+        lv_style_set_border_width(&style_bullet, 0);
+        lv_style_set_radius(&style_bullet, LV_RADIUS_CIRCLE);
+
+        lv_style_init(&style_parent_flex_obj);
+        lv_style_set_size(&style_parent_flex_obj, LV_PCT(100), LV_SIZE_CONTENT);
+        lv_style_set_border_width(&style_parent_flex_obj, 0);
+        lv_style_set_bg_opa(&style_parent_flex_obj, LV_OPA_0);
+        lv_style_set_pad_all(&style_parent_flex_obj, 0);
+
+        lv_style_init(&style_textblock);
+        lv_style_set_width(&style_textblock, LV_PCT(100));
+
+        lv_obj_set_style_text_font(lv_screen_active(), font_normal, 0);
+    }
+
+    void Show(Model& model);
+
+    void Draw() override {
+        for (const auto& component : components) {
+            component->Draw();
+        }
+    }
+};
+
+
+void BaseView::Show(Model& model)
 {
-    lv_subject_notify(&my_subject);
-}
+    HeaderCreate(lv_layer_top());
 
-
-static void header_create(lv_obj_t* parent);
-static void profile_create(lv_obj_t* parent, SystemDateTimeWidget& dt_widget);
-
-void lv_demo_widgets2(SystemDateTimeWidget& dt_widget)
-{
-    font_large = LV_FONT_DEFAULT;
-    font_normal = LV_FONT_DEFAULT;
-
-    int32_t tab_h;
-    tab_h = 45;
-
-    lv_theme_default_init(NULL, lv_palette_main(LV_PALETTE_BLUE), lv_palette_main(LV_PALETTE_RED), LV_THEME_DEFAULT_DARK,
-        font_normal);
-
-    lv_style_init(&style_text_muted);
-    lv_style_set_text_opa(&style_text_muted, LV_OPA_50);
-
-    lv_style_init(&style_title);
-    lv_style_set_text_font(&style_title, font_large);
-
-    lv_style_init(&style_icon);
-    lv_style_set_text_color(&style_icon, lv_theme_get_color_primary(NULL));
-    lv_style_set_text_font(&style_icon, font_large);
-
-    lv_style_init(&style_bullet);
-    lv_style_set_border_width(&style_bullet, 0);
-    lv_style_set_radius(&style_bullet, LV_RADIUS_CIRCLE);
-
-    lv_style_init(&style_parent_flex_obj);
-    lv_style_set_size(&style_parent_flex_obj, LV_PCT(100), LV_SIZE_CONTENT);
-    lv_style_set_border_width(&style_parent_flex_obj, 0);
-    lv_style_set_bg_opa(&style_parent_flex_obj, LV_OPA_0);
-    lv_style_set_pad_all(&style_parent_flex_obj, 0);
-
-    lv_style_init(&style_textblock);
-    lv_style_set_width(&style_textblock, LV_PCT(100));
-
-    lv_obj_set_style_text_font(lv_screen_active(), font_normal, 0);
-
-    header_create(lv_layer_top());
-
-    profile_create(lv_screen_active(), dt_widget);
+    ProfileCreate(lv_screen_active(), model);
 }
 
 
 
-/**********************
- *   STATIC FUNCTIONS
- **********************/
-
-
-
-
-
-static void header_create(lv_obj_t* parent)
+void BaseView::HeaderCreate(lv_obj_t* parent)
 {
     lv_obj_t* header = lv_obj_create(parent);
     lv_obj_set_size(header, LV_PCT(100), 40);               // 画面幅いっぱい、高さ40px
@@ -184,7 +167,7 @@ static void header_create(lv_obj_t* parent)
     lv_obj_center(title);  // 中央配置
 }
 
-static void profile_create(lv_obj_t* parent, SystemDateTimeWidget& dt_widget)
+void BaseView::ProfileCreate(lv_obj_t* parent, Model& model)
 {
     lv_obj_t* panel2 = lv_obj_create(parent);
     lv_obj_set_height(panel2, LV_SIZE_CONTENT);
@@ -212,8 +195,9 @@ static void profile_create(lv_obj_t* parent, SystemDateTimeWidget& dt_widget)
     lv_label_set_text_static(date_time_label, "Date/Time");
     lv_obj_add_style(date_time_label, &style_text_muted, 0);
 
-    dt_widget.SetupWidget(flex_obj1);
-
+    SystemDateTimeWidget dt_widget;
+    dt_widget.SetupWidget(flex_obj1, model.GetSubject());
+    components.push_back(&model);
 
     lv_obj_t* flex_obj2 = lv_obj_create(flex_obj_root);
     lv_obj_set_flex_flow(flex_obj2, LV_FLEX_FLOW_COLUMN);
@@ -282,35 +266,6 @@ static void profile_create(lv_obj_t* parent, SystemDateTimeWidget& dt_widget)
     lv_obj_set_size(version2_value, LV_PCT(45), LV_SIZE_CONTENT);
 
 
-    /*
-    lv_obj_t* password_label = lv_label_create(panel2);
-    lv_label_set_text_static(password_label, "Password");
-    lv_obj_add_style(password_label, &style_text_muted, 0);
-
-    lv_obj_t* password = lv_textarea_create(panel2);
-    lv_textarea_set_one_line(password, true);
-    lv_textarea_set_password_mode(password, true);
-    lv_textarea_set_placeholder_text(password, "Min. 8 chars.");
-    lv_obj_add_event_cb(password, ta_event_cb, LV_EVENT_ALL, kb);
-
-    lv_obj_t* gender_label = lv_label_create(panel2);
-    lv_label_set_text_static(gender_label, "Gender");
-    lv_obj_add_style(gender_label, &style_text_muted, 0);
-
-    lv_obj_t* gender = lv_dropdown_create(panel2);
-    lv_dropdown_set_options_static(gender, "Male\nFemale\nOther");
-
-    lv_obj_t* birthday_label = lv_label_create(panel2);
-    lv_label_set_text_static(birthday_label, "Birthday");
-    lv_obj_add_style(birthday_label, &style_text_muted, 0);
-    */
-
-    /*
-    lv_obj_t* birthdate = lv_textarea_create(panel1);
-    lv_textarea_set_one_line(birthdate, true);
-    lv_obj_add_event_cb(birthdate, birthday_event_cb, LV_EVENT_ALL, NULL);
-    */
-
     static int32_t grid_main_col_dsc[] = { LV_GRID_FR(1), LV_GRID_TEMPLATE_LAST };
     static int32_t grid_main_row_dsc[] = { LV_GRID_CONTENT, LV_GRID_TEMPLATE_LAST };
 
@@ -339,11 +294,12 @@ int main(void)
 {
     auto sm = std::make_unique<ScreenManager>();
 
-    SystemDateTimeWidget dt_widget;
-    
-    lv_demo_widgets2(dt_widget);
+    auto view = std::make_unique<BaseView>();
 
-    sm->Start();
+    Model model;
+    view->Show(model);
+
+    sm->Start(*view);
 
     return 0;
 }

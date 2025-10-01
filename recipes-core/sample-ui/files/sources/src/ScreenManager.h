@@ -1,4 +1,7 @@
+#pragma once
+
 #include "lvgl.h"
+#include "IComponent.h"
 
 class ScreenManager {
     private:
@@ -25,7 +28,7 @@ class ScreenManager {
 
         void Initialize(const char *fbdev, const char *touchdev);
 
-        void Start();
+        void Start(IComponent& view);
 
         lv_display_t* getDisplay() const { return disp; }
         lv_indev_t* getTouch() const { return touch; }

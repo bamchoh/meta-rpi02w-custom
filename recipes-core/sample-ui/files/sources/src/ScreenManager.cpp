@@ -19,10 +19,11 @@ void ScreenManager::Initialize(const char* fbdev, const char* touchdev) {
     lv_evdev_set_swap_axes(touch, true);
 }
 
-void ScreenManager::Start() {
+void ScreenManager::Start(IComponent& view) {
     while (1)
     {
         uint32_t time_till_next = lv_timer_handler();
+        view.Draw();
         lv_delay_ms(time_till_next);
     }
 }
