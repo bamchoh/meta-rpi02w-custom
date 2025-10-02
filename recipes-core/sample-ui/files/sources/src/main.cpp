@@ -13,9 +13,12 @@
 #include <ctime>
 #include <memory>
 #include <vector>
+#include <map>
+#include <functional>
 
 #include <ScreenManager.h>
 #include <IComponent.h>
+#include <Theme.h>
 
 class Model : public IComponent {
 private:
@@ -54,40 +57,68 @@ public:
     }
 };
 
-class SystemDateTimeWidget {
-public:
-    static void MySubjectObserverCb(lv_observer_t *observer, lv_subject_t *subject)
-    {
-        const char* buf = lv_subject_get_string(subject);
-        lv_obj_t *lbl = (lv_obj_t *)lv_observer_get_target(observer);
-        if (lbl) {
-            lv_label_set_text(lbl, buf);
-        }
-    }
 
-    void SetupWidget(lv_obj_t* parent, lv_subject_t* my_subject);
+class IUIComponent {
+public:
+    virtual void Draw(lv_obj_t* parent) = 0;
+    virtual ~IUIComponent() {}
 };
 
-void SystemDateTimeWidget::SetupWidget(lv_obj_t* parent, lv_subject_t* my_subject)
+class SystemDateTimeWidget : public IUIComponent {
+private:
+    std::string default_text;
+    std::function<void(lv_obj_t*)> add_observer_fn;
+public:
+    SystemDateTimeWidget(std::string label, std::function<void(lv_obj_t*)> add_observer_fn) : default_text(label), add_observer_fn(add_observer_fn) {}
+
+    void Draw(lv_obj_t* parent) override;
+};
+
+void SystemDateTimeWidget::Draw(lv_obj_t* parent)
 {
     lv_obj_t* current_datetime = lv_obj_create(parent);
     lv_obj_set_size(current_datetime, LV_PCT(100), LV_SIZE_CONTENT);
 
     lv_obj_t* current_datetime_label = lv_label_create(current_datetime);
-    lv_label_set_text(current_datetime_label, "----/--/-- --:--:-- (---)");
-    lv_subject_add_observer_obj(my_subject, MySubjectObserverCb, current_datetime_label, NULL);
+    lv_label_set_text(current_datetime_label, default_text.c_str());
+    if(add_observer_fn) {
+        add_observer_fn(current_datetime_label);
+    }
 }
+
+class WidgetDecorator : public IUIComponent {
+protected:
+    IUIComponent &component;
+public:
+    WidgetDecorator(IUIComponent &c) : component(c) {}
+    void Draw(lv_obj_t* parent) override { component.Draw(parent); }
+};
+
+class LabeledField : public WidgetDecorator {
+private:
+    const char* label;
+public:
+    LabeledField(const char* label, IUIComponent &component)
+        : WidgetDecorator(component), label(label) {}
+
+    ~LabeledField() {}
+
+    void Draw(lv_obj_t* parent) override {
+        lv_obj_t* flex_obj = lv_obj_create(parent);
+        lv_obj_set_flex_flow(flex_obj, LV_FLEX_FLOW_COLUMN);
+        lv_obj_add_style(flex_obj, &Theme::ParentFlexObj, 0);
+
+        lv_obj_t* label_obj = lv_label_create(flex_obj);
+        lv_label_set_text_static(label_obj, label);
+        lv_obj_add_style(label_obj, &Theme::TextMuted, 0);
+
+        component.Draw(flex_obj);
+    }
+};
 
 class BaseView : public IComponent {
 private:
-    lv_style_t style_text_muted;
-    lv_style_t style_title;
-    lv_style_t style_icon;
-    lv_style_t style_bullet;
-    lv_style_t style_parent_flex_obj;
-    lv_style_t style_textblock;
 
-    const lv_font_t* font_large;
     const lv_font_t* font_normal;
 
     void HeaderCreate(lv_obj_t* parent);
@@ -97,7 +128,6 @@ private:
 
 public:
     BaseView() {
-        font_large = LV_FONT_DEFAULT;
         font_normal = LV_FONT_DEFAULT;
 
         int32_t tab_h;
@@ -106,28 +136,7 @@ public:
         lv_theme_default_init(NULL, lv_palette_main(LV_PALETTE_BLUE), lv_palette_main(LV_PALETTE_RED), LV_THEME_DEFAULT_DARK,
             font_normal);
 
-        lv_style_init(&style_text_muted);
-        lv_style_set_text_opa(&style_text_muted, LV_OPA_50);
-
-        lv_style_init(&style_title);
-        lv_style_set_text_font(&style_title, font_large);
-
-        lv_style_init(&style_icon);
-        lv_style_set_text_color(&style_icon, lv_theme_get_color_primary(NULL));
-        lv_style_set_text_font(&style_icon, font_large);
-
-        lv_style_init(&style_bullet);
-        lv_style_set_border_width(&style_bullet, 0);
-        lv_style_set_radius(&style_bullet, LV_RADIUS_CIRCLE);
-
-        lv_style_init(&style_parent_flex_obj);
-        lv_style_set_size(&style_parent_flex_obj, LV_PCT(100), LV_SIZE_CONTENT);
-        lv_style_set_border_width(&style_parent_flex_obj, 0);
-        lv_style_set_bg_opa(&style_parent_flex_obj, LV_OPA_0);
-        lv_style_set_pad_all(&style_parent_flex_obj, 0);
-
-        lv_style_init(&style_textblock);
-        lv_style_set_width(&style_textblock, LV_PCT(100));
+        Theme::Init();
 
         lv_obj_set_style_text_font(lv_screen_active(), font_normal, 0);
     }
@@ -175,7 +184,7 @@ void BaseView::ProfileCreate(lv_obj_t* parent, Model& model)
 
     lv_obj_t* panel2_title = lv_label_create(panel2);
     lv_label_set_text_static(panel2_title, "Diagnostics");
-    lv_obj_add_style(panel2_title, &style_title, 0);
+    lv_obj_add_style(panel2_title, &Theme::Title, 0);
 
     lv_obj_t* flex_obj_root = lv_obj_create(panel2);
     lv_obj_set_flex_flow(flex_obj_root, LV_FLEX_FLOW_COLUMN);
@@ -185,59 +194,37 @@ void BaseView::ProfileCreate(lv_obj_t* parent, Model& model)
     lv_obj_set_style_pad_all(flex_obj_root, 0, 0);
     lv_obj_set_style_pad_row(flex_obj_root, 30, 0);
 
+    static auto MySubjectObserverCb = [](lv_observer_t *observer, lv_subject_t *subject) {
+        const char* buf = lv_subject_get_string(subject);
+        lv_obj_t *lbl = (lv_obj_t *)lv_observer_get_target(observer);
+        if (lbl) {
+            lv_label_set_text(lbl, buf);
+        }
+    };
 
-
-    lv_obj_t* flex_obj1 = lv_obj_create(flex_obj_root);
-    lv_obj_set_flex_flow(flex_obj1, LV_FLEX_FLOW_COLUMN);
-    lv_obj_add_style(flex_obj1, &style_parent_flex_obj, 0);
-
-    lv_obj_t* date_time_label = lv_label_create(flex_obj1);
-    lv_label_set_text_static(date_time_label, "Date/Time");
-    lv_obj_add_style(date_time_label, &style_text_muted, 0);
-
-    SystemDateTimeWidget dt_widget;
-    dt_widget.SetupWidget(flex_obj1, model.GetSubject());
+    auto dt_widget = SystemDateTimeWidget("--/--/-- --:--:-- (---)", [&model](lv_obj_t* obj) {
+        lv_subject_add_observer_obj(model.GetSubject(), MySubjectObserverCb, obj, NULL);
+    });
+    LabeledField labeled_datetime("Date/Time", dt_widget);
+    labeled_datetime.Draw(flex_obj_root);
     components.push_back(&model);
 
-    lv_obj_t* flex_obj2 = lv_obj_create(flex_obj_root);
-    lv_obj_set_flex_flow(flex_obj2, LV_FLEX_FLOW_COLUMN);
-    lv_obj_add_style(flex_obj2, &style_parent_flex_obj, 0);
+    auto ipaddr1_widget = SystemDateTimeWidget("192.168.1.1", nullptr);
+    LabeledField labeled_ip_addr1("Ethernet 1", ipaddr1_widget);
+    labeled_ip_addr1.Draw(flex_obj_root);
 
-    lv_obj_t* ip_addr1_label = lv_label_create(flex_obj2);
-    lv_label_set_text_static(ip_addr1_label, "Ethernet 1");
-    lv_obj_add_style(ip_addr1_label, &style_text_muted, 0);
+    auto ipaddr2_widget = SystemDateTimeWidget("192.168.1.2", nullptr);
+    LabeledField labeled_ip_addr2("Ethernet 2", ipaddr2_widget);
+    labeled_ip_addr1.Draw(flex_obj_root);
 
-    lv_obj_t* current_ip_addr1 = lv_obj_create(flex_obj2);
-    lv_obj_set_size(current_ip_addr1, LV_PCT(100), LV_SIZE_CONTENT);
-
-    lv_obj_t* current_ip_addr1_label = lv_label_create(current_ip_addr1);
-    lv_label_set_text(current_ip_addr1_label, "192.168.1.1");
-
-
-
-    lv_obj_t* flex_obj3 = lv_obj_create(flex_obj_root);
-    lv_obj_set_flex_flow(flex_obj3, LV_FLEX_FLOW_COLUMN);
-    lv_obj_add_style(flex_obj3, &style_parent_flex_obj, 0);
-
-    lv_obj_t* ip_addr2_label = lv_label_create(flex_obj3);
-    lv_label_set_text_static(ip_addr2_label, "Ethernet 2");
-    lv_obj_add_style(ip_addr2_label, &style_text_muted, 0);
-
-    lv_obj_t* current_ip_addr2 = lv_obj_create(flex_obj3);
-    lv_obj_set_size(current_ip_addr2, LV_PCT(100), LV_SIZE_CONTENT);
-
-    lv_obj_t* current_ip_addr2_label = lv_label_create(current_ip_addr2);
-    lv_label_set_text(current_ip_addr2_label, "192.168.1.2");
-
-
-
+    
     lv_obj_t* flex_obj4 = lv_obj_create(flex_obj_root);
     lv_obj_set_flex_flow(flex_obj4, LV_FLEX_FLOW_COLUMN);
-    lv_obj_add_style(flex_obj4, &style_parent_flex_obj, 0);
+    lv_obj_add_style(flex_obj4, &Theme::ParentFlexObj, 0);
 
     lv_obj_t* version_title = lv_label_create(flex_obj4);
     lv_label_set_text_static(version_title, "Versions");
-    lv_obj_add_style(version_title, &style_text_muted, 0);
+    lv_obj_add_style(version_title, &Theme::TextMuted, 0);
 
     lv_obj_t* version_comp1 = lv_obj_create(flex_obj4);
     lv_obj_set_flex_flow(version_comp1, LV_FLEX_FLOW_ROW);
